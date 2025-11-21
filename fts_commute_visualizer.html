@@ -361,6 +361,8 @@
                         <form id="transitModeForm">
                                 <div><input type="checkbox" name="transitModeCheck" id="BUS" value="BUS" checked><label for="BUS">Bus</label></div>
                                 <div><input type="checkbox" name="transitModeCheck" id="RAIL" value="RAIL" checked><label for="RAIL">Rail</label></div>
+                                <div><input type="checkbox" name="transitModeCheck" id="SUBWAY" value="SUBWAY" checked><label for="SUBWAY">Subway</label></div>
+                                <div><input type="checkbox" name="transitModeCheck" id="TRAM" value="TRAM" checked><label for="TRAM">Tram</label></div>
                         </form>
                     </div>
 
@@ -432,7 +434,7 @@
                     </select>
 
                         <select id="travelTimeYearSelect">
-                            <option value=2017>2017</option> <option value=2018>2018</option> <option value=2019>2019</option>
+                            <option value=2025>2025</option> <option value=2026>2026</option> <option value=2027>2027</option>
                         </select>
                     </div>
                 </div>
@@ -440,7 +442,14 @@
 
             <div class="blocks">
                 <h4>Hexagon Radius (in meters)</h4>
-              <input id="gridSizeField" name="gridSizeInput" type="number" value="250"> 
+              <input id="gridSizeField" name="gridSizeInput" type="number" value="250">
+            </div>
+            <div class="blocks">
+                <h4>Search Radius Multiplier</h4>
+              <input id="searchRadiusMultiplier" name="searchRadiusMultiplierInput" type="number" value="40">
+            </div>
+            <div class="blocks">
+                <button id="drawBtn" onclick="toggleDraw()" class="btn_pos">Draw Area</button>
             </div>
             <div class="btn_right_align">
                 <button onclick="Clear()" class="btn_neg">Clear</button>
@@ -481,7 +490,7 @@
             // Constants
             var targetLimit = 10000;
             var requestInterval = 1100;
-            var seattle = { lat:47.60621, lng:-122.332071 };
+            var seattle = { lat:50.092118684005754, lng:14.453024968889865 };
 
             // Global variables 
             var map;                    // google.maps.Map object
@@ -508,10 +517,12 @@
             var polyFillOpacity = .5;
             var polyStrokeOpacity = .8;
             var drawPolyline;
+            var maskImageLoaded = false;
+            var enableWaterMasking = true; // Set to false to disable water filtering
 
-            // green, yellow, orange, red, purple, blue, grey
-            var polyColors = [ '#388C04', '#F0DE1B', '#FF7215', '#E00300',  /*'#CB55E3', '#3B74ED',*/ '#D3D3D3']; 
-            var travelTimeThresholds = [ 15, 30, 45, 60, /*75, 90,*/ Infinity ];
+            // dark green, light green, light yellow, dark yellow, light red, purple
+            var polyColors = [ '#1B5E20', '#4CAF50', '#FFEE58', '#F9A825', '#EF5350', '#9C27B0'];
+            var travelTimeThresholds = [ 15, 30, 45, 60, 75, Infinity ];
 
 
             var targets = [];           // array of {polyCenter:LatLng, dest:LatLng} for hexagon grid
@@ -588,7 +599,8 @@
             }
 
             function getSearchRadius() {
-                return getGridRadius() * 10;
+                var multiplier = Number(document.getElementById('searchRadiusMultiplier').value);
+                return getGridRadius() * multiplier;
             }
 
             function getTravelTimeThresholdIndex(travelTimeSeconds) {
@@ -692,6 +704,7 @@
                 var _travelMode = getTravelMode();
                 str += "&travelMode=" + _travelMode;
                 str += "&gridSize=" + getGridRadius();
+                str += "&searchRadiusMultiplier=" + document.getElementById('searchRadiusMultiplier').value;
                 str += "&targetLocation=" + targetLocation.lat + "," + targetLocation.lng;
 
                 var advancedSearch = specifyTavelTime.checked;
@@ -930,6 +943,9 @@
                         gridSizeField.value = Number(value);
                         document.getElementById('gridSizeField').value = value;
                     }
+                    else if (key == 'searchRadiusMultiplier') {
+                        document.getElementById('searchRadiusMultiplier').value = value;
+                    }
                     else if (key == 'targetLocation') {
                         var latlng = value.split(',');
                         targetLocation = { lat: Number(latlng[0]), lng: Number(latlng[1]) };
@@ -963,7 +979,17 @@
 
                 // Create Google Maps API objects
                 bounds = new google.maps.LatLngBounds;
-                map = new google.maps.Map(document.getElementById('map'), { center: targetLocation, zoom: 11, clickableIcons: false });
+                map = new google.maps.Map(document.getElementById('map'), {
+                    center: targetLocation,
+                    zoom: 11,
+                    clickableIcons: false,
+                    zoomControl: true,
+                    zoomControlOptions: {
+                        position: google.maps.ControlPosition.RIGHT_BOTTOM
+                    },
+                    streetViewControl: false,
+                    fullscreenControl: false
+                });
                 service = new google.maps.DistanceMatrixService;
                 polyInfoWindow = new google.maps.InfoWindow({content: "hello" });
 
@@ -1025,52 +1051,8 @@
                     map.fitBounds(bounds);
                 });
 
-                // Create 'draw' button
-                controlDiv = document.createElement('div');
-
-                var controlUI = document.createElement('div');
-                controlUI.style.backgroundColor = '#00B582';
-                controlUI.style.border = '1px solid #028269';
-                controlUI.style.borderRadius = '0.15rem';
-                controlUI.style.boxShadow = 'inset 0 1px 0 0 #58C8A8;';
-                controlUI.style.cursor = 'pointer';
-                controlUI.style.marginBottom = '1.5rem';
-                controlUI.style.padding = '0rem 1.3rem';
-                controlUI.style.textAlign = 'center';
-                controlUI.title = 'Click to draw bounds';
-                controlDiv.appendChild(controlUI);
-
-                var drawText = document.createElement('div');
-                drawText.style.color = '#fff';
-                drawText.style.fontSize = '13px';
-                drawText.style.textTransform = 'uppercase';
-                drawText.style.letterSpacing = '0.05em';
-                drawText.style.lineHeight = '2rem';
-                drawText.innerHTML = 'Draw';
-                controlUI.appendChild(drawText);
-
-
-                controlUI.addEventListener('click', function() {
-                    if (drawText.innerHTML === 'Clear') {
-                        Clear();
-                        drawPolyline.getPath().clear();
-                        drawText.innerHTML = 'Draw';
-                        map.setOptions({draggable:true, draggableCursor: null});
-                        drawing = false;
-                        document.body.classList.remove('blockScroll');
-                    }
-                    else if (!drawing && drawText.innerHTML === 'Draw') {
-                        Clear();
-                        drawPolyline.getPath().clear();
-                        map.setOptions({draggable:false, draggableCursor: 'crosshair'});
-                        drawing = true;
-                        drawText.innerHTML = 'Clear';
-                    }
-                });
-
-
-                controlDiv.index = 1;
-                map.controls[google.maps.ControlPosition.BOTTOM_RIGHT].push(controlDiv);
+                // Draw button is now in the UI panel, no map control needed
+                controlDiv = document.createElement('div'); // Keep for compatibility
 
 
                 // Event listeners on map to support drawing
@@ -1101,6 +1083,8 @@
                         map.setOptions({draggable:true, draggableCursor: null});
                         drawing = false;
                         drawEnding = true;
+                        // Update button text to "Clear Area" since we now have a drawn area
+                        updateDrawButton();
                         setTimeout(function() { drawEnding = false; }, 100);
                     }
                 };
@@ -1122,6 +1106,39 @@
                 });
             }
 
+            function toggleDraw() {
+                var drawBtn = document.getElementById('drawBtn');
+                var hasDrawnArea = drawPolyline && drawPolyline.getPath().getLength() > 0;
+
+                if (hasDrawnArea && !drawing) {
+                    // Clear the drawn area
+                    drawPolyline.getPath().clear();
+                    drawBtn.innerHTML = 'Draw Area';
+                } else if (!drawing) {
+                    // Start drawing
+                    Clear();
+                    if (drawPolyline) drawPolyline.getPath().clear();
+                    map.setOptions({draggable: false, draggableCursor: 'crosshair'});
+                    drawing = true;
+                    // Button stays as "Draw Area" while drawing
+                }
+            }
+
+            function clearDrawing() {
+                if (drawPolyline) drawPolyline.getPath().clear();
+                var drawBtn = document.getElementById('drawBtn');
+                if (drawBtn) drawBtn.innerHTML = 'Draw Area';
+                drawing = false;
+                map.setOptions({draggable: true, draggableCursor: null});
+            }
+
+            function updateDrawButton() {
+                var drawBtn = document.getElementById('drawBtn');
+                if (!drawBtn) return;
+                var hasDrawnArea = drawPolyline && drawPolyline.getPath().getLength() > 0;
+                drawBtn.innerHTML = hasDrawnArea ? 'Clear Area' : 'Draw Area';
+            }
+
             function Clear() {
                 queryIndices = [];
                 if (queryTimeout !== null) {
@@ -1139,6 +1156,9 @@
 
                 polyInfoWindow.close();
                 polyInfoWindowSource = -1;
+
+                // Also clear the drawing
+                clearDrawing();
             }
 
 
@@ -1182,15 +1202,29 @@
 
                 // Build a static map URL for detecting water/highways
                 var mapCenter = { lat:map.getCenter().lat(), lng:map.getCenter().lng() };
-                var locationStr = "\"" + mapCenter.lat + "," + mapCenter.lng + "\"";
+                var locationStr = mapCenter.lat + "," + mapCenter.lng;
                 var imageZoom = map.getZoom() - 1;
-                var imagePath ="http://maps.googleapis.com/maps/api/staticmap?scale=2&center=" + locationStr + "&zoom=" + imageZoom + "&size=" + staticMapWidth + "x" + staticMapHeight + "&sensor=false&visual_refresh=true&style=feature:water|color:0x00FF00&style=element:labels|visibility:off&style=feature:transit|visibiity:off&style=feature:poi|visibility:off&style=feature:administrative|visibility:off&style=feature:transit|visibility:off&style=feature:road.highway|color:0x00FF00";
+
+                // Create a cleaner style URL - only mark water as green, everything else default
+                var styles = [
+                    "feature:all|element:all|saturation:-100|lightness:30",  // Make land light gray
+                    "feature:water|element:geometry|color:0x00FF00",          // Make water bright green
+                    "feature:all|element:labels|visibility:off"               // Hide labels
+                ].map(s => "style=" + encodeURIComponent(s)).join("&");
+
+                var imagePath = "https://maps.googleapis.com/maps/api/staticmap?" +
+                    "center=" + locationStr +
+                    "&zoom=" + imageZoom +
+                    "&size=" + staticMapWidth + "x" + staticMapHeight +
+                    "&scale=2" +
+                    "&key=" + API_KEY +
+                    "&" + styles;
 
                 // Example imagePath:
                 // http://maps.googleapis.com/maps/api/staticmap?scale=2&center="47.60620999999991,-122.33207357423623"&zoom=14&size=640x640&sensor=false&visual_refresh=true&style=feature:water|color:0x00FF00&style=element:labels|visibility:off&style=feature:transit|visibiity:off&style=feature:poi|visibility:off&style=feature:administrative|visibility:off&style=feature:transit|visibility:off&style=feature:road.highway|color:0x00FF00
 
                 var mapMask = new Image();
-                mapMask.crossOrigin = 'http://maps.googleapis.com/crossdomain.xml';
+                mapMask.crossOrigin = 'anonymous';
                 mapMask.src = imagePath;
                 var mapMaskCorners = staticMapCorners(mapCenter.lat, mapCenter.lng, imageZoom, staticMapWidth, staticMapHeight);
 
@@ -1203,10 +1237,29 @@
 
                 // Callback for loading static map
                 mapMask.onload = function() {
+                    console.log("Water mask image loaded successfully");
 
                     // Draw image (hidden) for sampling
                     staticMapCanvas.drawImage(mapMask, 0, 0, 640, 640);
+                    maskImageLoaded = true;
 
+                    // Debug: Sample multiple pixels to verify mask is working
+                    var centerPixel = staticMapCanvas.getImageData(320, 320, 1, 1).data;
+                    var topLeft = staticMapCanvas.getImageData(100, 100, 1, 1).data;
+                    var bottomRight = staticMapCanvas.getImageData(540, 540, 1, 1).data;
+
+                    console.log("Mask pixel samples:");
+                    console.log("  Center (320,320): RGB(" + centerPixel[0] + ", " + centerPixel[1] + ", " + centerPixel[2] + ")");
+                    console.log("  Top-left (100,100): RGB(" + topLeft[0] + ", " + topLeft[1] + ", " + topLeft[2] + ")");
+                    console.log("  Bottom-right (540,540): RGB(" + bottomRight[0] + ", " + bottomRight[1] + ", " + bottomRight[2] + ")");
+
+                    var next = advancedSearch ? getTimeZoneOffset : calculateTargets;
+                    setTimeout(next, 100);
+                }
+
+                mapMask.onerror = function() {
+                    console.warn("Water mask image failed to load - proceeding without water filtering");
+                    maskImageLoaded = false;
                     var next = advancedSearch ? getTimeZoneOffset : calculateTargets;
                     setTimeout(next, 100);
                 }                        
@@ -1262,12 +1315,20 @@
                     var row = 0;
                     var col = 0;
                     targets = [];
+                    var maskedCount = 0;
+                    var radiusFilteredCount = 0;
+                    var polygonFilteredCount = 0;
 
                     var southwest = searchBounds.getSouthWest();
                     southwest = { lat:southwest.lat(), lng:southwest.lng() };
 
                     var northeast = searchBounds.getNorthEast();
                     northeast = { lat:northeast.lat(), lng:northeast.lng() };
+
+                    console.log("=== Target Generation Started ===");
+                    console.log("Grid radius: " + gridRadius + "m, Search radius: " + searchRadius + "m");
+                    console.log("Search bounds: SW(" + southwest.lat + "," + southwest.lng + ") NE(" + northeast.lat + "," + northeast.lng + ")");
+                    console.log("Water mask filtering: " + (enableWaterMasking ? (maskImageLoaded ? "ENABLED" : "DISABLED (image not loaded)") : "DISABLED (turned off)"));
 
                     // Row loop
                     for (;;) {
@@ -1291,28 +1352,40 @@
                             if (polyCenter.lng > northeast.lng || targets.length > targetLimit)
                                 break;
 
-                            // Test point against mask
+                            // Test point against mask (only if enabled and mask image loaded successfully)
                             var dest = polyCenter;
-                            var masked = isMasked(mapMask, dest.lat, dest.lng, mapMaskCorners, staticMapWidth, staticMapHeight);
+                            var masked = false;
 
-                            if (masked) {
-                                // If center is masked try a few points near the center
-                                for (var i = 0; i < 4 && masked; ++i) {
-                                    dest = computeOffset(polyCenter, 45 + 90*i, gridRadius * .5);
-                                    masked = isMasked(mapMask, dest.lat, dest.lng, mapMaskCorners, staticMapWidth, staticMapHeight);
+                            if (enableWaterMasking && maskImageLoaded) {
+                                masked = isMasked(mapMask, dest.lat, dest.lng, mapMaskCorners, staticMapWidth, staticMapHeight);
+
+                                if (masked) {
+                                    // If center is masked try a few points near the center
+                                    for (var i = 0; i < 4 && masked; ++i) {
+                                        dest = computeOffset(polyCenter, 45 + 90*i, gridRadius * .5);
+                                        masked = isMasked(mapMask, dest.lat, dest.lng, mapMaskCorners, staticMapWidth, staticMapHeight);
+                                    }
+                                }
+
+                                if (masked) {
+                                    maskedCount++;
                                 }
                             }
 
                             var path = drawPolyline.getPath();
                             if (!masked && path.getLength() > 0) {
-                                if (!pointInPolygon(dest, path.getArray()))
+                                if (!pointInPolygon(dest, path.getArray())) {
                                     masked = true;
+                                    polygonFilteredCount++;
+                                }
                             }
 
                             if (!masked && path.getLength() == 0) {
                                 var dist = computeDistance(polyCenter, targetLocation);
-                                if (dist > searchRadius)
+                                if (dist > searchRadius) {
                                     masked = true;
+                                    radiusFilteredCount++;
+                                }
                             }
 
                             if (!masked) {
@@ -1327,6 +1400,14 @@
                         col = 0;
                     }
                     map.fitBounds(searchBounds);
+
+                    console.log("=== Target Generation Complete ===");
+                    console.log("Valid targets: " + targets.length);
+                    console.log("Filtered by water/highway mask: " + maskedCount);
+                    console.log("Filtered by radius: " + radiusFilteredCount);
+                    console.log("Filtered by polygon: " + polygonFilteredCount);
+                    console.log("Total filtered: " + (maskedCount + radiusFilteredCount + polygonFilteredCount));
+                    console.log("Query batches to send: " + Math.ceil(targets.length / destinationLimit));
 
                     // Setup queryOrigins and queryDestinations based on query type (departFrom vs arriveAt)
                     var mappedTargets = targets.map(e=>e.dest);
@@ -1389,18 +1470,19 @@
                             // Re-request if rate limiter hit
                             if (status === 'OVER_QUERY_LIMIT') {
                                 rateLimitCounter += 1;
-                                console.log("Unexpected error: [" + status + "] Index: [" + idx + "]  DelayCount: [" + rateLimitCounter + "]");
+                                console.log("OVER_QUERY_LIMIT error - Index: [" + idx + "]  DelayCount: [" + rateLimitCounter + "]");
                                 queryIndices.push(idx);
                                 if (queryTimeout == null) {
                                     queryTimeout = setTimeout(stepQuery, queryDelay());
                                 }
                             }
                             else {
-                                console.log("Unexpected error: [" + status + "]");
+                                console.log("API error: [" + status + "] at Index: [" + idx + "]");
                             }
                             return;
                         }
                         rateLimitCounter = 0;
+                        console.log("Query batch completed successfully - Index: " + idx);
 
                         // Process results
                         for (var i = 0; i < response.rows.length; i++) {
@@ -1461,6 +1543,8 @@
                 var stepQuery = function(delay) {
                     var i = queryIndices.pop();
                     var count = Math.min(targets.length - i, destinationLimit);
+
+                    console.log("Query batch starting - Index: " + i + ", Count: " + count + ", Remaining batches: " + queryIndices.length);
 
                     var stepOrigins = departFrom ? queryOrigins : queryOrigins.slice(i, i + count);
                     var stepDestinations = departFrom ? queryDestinations.slice(i, i + count) : queryDestinations;
@@ -1548,7 +1632,14 @@
 
                 var pixel_data = staticMapCanvas.getImageData(pixel.x, pixel.y, 1, 1);
                 pixel_data = pixel_data.data;
-                var is_green = pixel_data[0] == 0 && pixel_data[1] >= 254 && pixel_data[2] == 0;
+                var r = pixel_data[0];
+                var g = pixel_data[1];
+                var b = pixel_data[2];
+
+                // Check if pixel is green (water/highway marker)
+                // Green should be dominant and other channels should be low
+                var is_green = r < 50 && g > 200 && b < 50;
+
                 return is_green;
             }
 
